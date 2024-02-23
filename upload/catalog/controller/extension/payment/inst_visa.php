@@ -5,14 +5,14 @@ class ControllerExtensionPaymentInstVisa extends Controller {
     }
 
     public function confirm() {
-
         $this->load->model('checkout/order');
         $order_info = $this->model_checkout_order->getOrder($this->session->data['order_id']);
 //        $payment_info = $this->session->data;
-//        $products = $this->cart->getProducts();
+        $products = $this->cart->getProducts();
+        error_log("saron------".$products);
 
-        $timestamp = $this->getMillisecond();
-        $method = 'POST';
+//        $timestamp = $this->getMillisecond();
+//        $method = 'POST';
         $requestPath = '/api/v1/payment';
 
         $url = $this->config->get('payment_inst_visa_host') . $requestPath;
@@ -21,17 +21,17 @@ class ControllerExtensionPaymentInstVisa extends Controller {
         $passphrase = $this->config->get('payment_inst_visa_api_passphrase') . '';
         $iframe = $this->config->get('payment_inst_visa_iframe') . '';
 
-//        $customer = array(
-//            'email' => $order_info['email'],
-//            'phone' => $order_info['telephone'],
-//            'first_name' => $order_info['payment_firstname'],
-//            'last_name' => $order_info['payment_lastname'],
-//            'country' => $order_info['payment_country'],
-//            'state' => $order_info['payment_zone'],
-//            'city' => $order_info['payment_city'],
-//            'address' => $order_info['payment_address_1'] . ' ' . $order_info['payment_address_2'],
-//            'zipcode' => $order_info['payment_postcode'],
-//        );
+        $customer = array(
+            'email' => $order_info['email'],
+            'phone' => $order_info['telephone'],
+            'first_name' => $order_info['payment_firstname'],
+            'last_name' => $order_info['payment_lastname'],
+            'country' => 'USA',
+            'state' => $order_info['payment_zone'],
+            'city' => $order_info['payment_city'],
+            'address' => $order_info['payment_address_1'] . ' ' . $order_info['payment_address_2'],
+            'zipcode' => $order_info['payment_postcode'],
+        );
 
 //        $product_info = $products;
 //        $product_info = array(
@@ -45,27 +45,41 @@ class ControllerExtensionPaymentInstVisa extends Controller {
 
         $host = $this->request->server['HTTPS'] ? 'https://' : 'http://';
         $host.= $this->request->server['HTTP_HOST'];
+
+
         $post_data = $this->formatArray(array(
             'currency' => $order_info['currency_code'],
             'amount' => number_format($this->currency->format($order_info['total'], $order_info['currency_code'], $order_info['currency_value'], false), 2),
             'cust_order_id' => 'OC_' . substr($key, 0, 5) . '_' . date("YmdHis",time()) . "_" .$order_info['order_id'],
-//            'customer' => $customer,
+            'payment_method' => 'creditcard',
+            'notification_url' => '123123',
+            'return_url' => $host . '/index.php?route=common/home',
+            'customer' => $customer,
+            'cart_items' => $products,
 //            'product_info' => $product_info, // todo
 //            'shipping_info' => $shipping_info,
-            'network' => 'Visa',
-//            'return_url' => $host . '/index.php?route=common/home',
-        
-        
+//            'network' => 'Visa',
+
         ));
 
-        $sign = $this->sign($timestamp, $method, $requestPath, '', $key, $secret, $post_data);
-        $authorization = 'Inst:' . $key . ':' . $timestamp . ':' . $sign;
-        $result = $this->send_post($url, json_encode($post_data), $authorization, $passphrase);
+        $timeStamp = round(microtime(true) * 1000);
+        $signatureData = $key .
+            "&" . $post_data['cust_order_id'] .
+            "&" . $post_data['amount'] .
+            "&" . $post_data['currency'] .
+            "&" . $secret .
+            "&" . $timeStamp;
+
+        $result = $this->post($url, $requestPath, $post_data, $signatureData, $key, $timeStamp);
+
+
+//        $sign = $this->sign($timestamp, $method, $requestPath, '', $key, $secret, $post_data);
+//        $authorization = 'Inst:' . $key . ':' . $timestamp . ':' . $sign;
+//        $result = $this->send_post($url, json_encode($post_data), $authorization, $passphrase);
 
         $this->response->addHeader('Content-Type: application/json');
         $this->response->addHeader('iframe: ' . $iframe);
         $this->response->setOutput($result);
-
 //        // for test
 //        $preHash = $this->preHash($timestamp, $method, $requestPath, '', $key, $post_data);
 //        $this->response->setOutput(json_encode($post_data));
@@ -212,4 +226,34 @@ class ControllerExtensionPaymentInstVisa extends Controller {
             $this->response->setOutput(json_encode($response));
         }
     }
+
+
+    public static function post($url, $requestPath, $reqObject, $signature, $apikey, float $timStamp){
+        $SIGN_SEPARATOR = ":";
+        $sign =  hash('sha256', $signature);
+        $authorizationStr = $apikey
+            . $SIGN_SEPARATOR
+            . $timStamp
+            . $SIGN_SEPARATOR
+            . $sign;
+        $curl = curl_init($url);
+        curl_setopt ($curl, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt ($curl, CURLOPT_POST, true);
+        curl_setopt ($curl, CURLOPT_POSTFIELDS, json_encode($reqObject, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) );
+        curl_setopt ($curl, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+        $headers = array(
+            "Content-Type: application/json; charset=utf-8",
+            "Accept: application/json",
+            "Authorization:" . $authorizationStr,
+        );
+        curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
+        $responseText = curl_exec($curl);
+        if (!$responseText) {
+            echo('CURL_ERROR: ' . var_export(curl_error($curl)));
+        }
+        curl_close($curl);
+        return $responseText;
+    }
+
 }
